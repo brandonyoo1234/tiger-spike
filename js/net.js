@@ -34,23 +34,59 @@ function localRoom(){
  const L=mk('lobby');L.join=async name=>rooms[name]||mk(name);return L}
 
 // anyone, no sign-in: browsers find each other through public relays, then talk directly (WebRTC)
-function p2pRoom(){const T=window.Trystero;if(!T||!window.RTCPeerConnection)return null;
- const cfg={appId:'tiger-spike-sis-volleyball',relayConfig:{redundancy:4,warnOnRelayFailure:false}},rooms={};
- function mk(name){const room=T.joinRoom(cfg,name),act=room.makeAction('pr');
-  const R={mine:{},pm:new Map(),subs:new Set(),dirty:false,
-   all(){return[{peer:T.selfId,by:null,isMe:true,sameTab:true,kind:'human',guest:false,presence:R.mine,updatedAt:Date.now()},...R.pm.values()]},
+// Minimal MQTT 3.1.1 over WebSocket (QoS 0 only)
+function mqConn(url,onMsg,onUp){const te=new TextEncoder(),td=new TextDecoder();let ws,buf=new Uint8Array(0),ping,up=false,subs=new Set(),dead=false,retry=1000;
+ const str=s=>{const b=te.encode(s);return[b.length>>8,b.length&255,...b]};
+ const len=n=>{const o=[];do{let d=n%128;n=Math.floor(n/128);if(n>0)d|=128;o.push(d)}while(n>0);return o};
+ const pkt=(h,body)=>{const b=body instanceof Uint8Array?body:Uint8Array.from(body),o=new Uint8Array(1+len(b.length).length+b.length);o[0]=h;o.set(len(b.length),1);o.set(b,1+len(b.length).length);return o};
+ const send=p=>{if(ws&&ws.readyState===1)ws.send(p)};
+ const sub=t=>send(pkt(0x82,[0,1,...str(t),0]));
+ function open(){if(dead)return;try{ws=new WebSocket(url,'mqtt')}catch(e){return later()}ws.binaryType='arraybuffer';
+  ws.onopen=()=>{const id='ts'+Math.random().toString(36).slice(2,12);send(pkt(0x10,[...str('MQTT'),4,2,0,30,...str(id)]))};
+  ws.onmessage=e=>{const d=new Uint8Array(e.data),n=new Uint8Array(buf.length+d.length);n.set(buf);n.set(d,buf.length);buf=n;
+   for(;;){let m=1,v=0,i=1,b;do{if(i>=buf.length)return;b=buf[i++];v+=(b&127)*m;m*=128}while(b&128);if(buf.length<i+v)return;
+    const h=buf[0],body=buf.subarray(i,i+v);buf=buf.slice(i+v);
+    if((h>>4)===2){up=true;retry=1000;for(const t of subs)sub(t);ping=setInterval(()=>send(Uint8Array.of(0xc0,0)),20000);onUp&&onUp(true)}
+    else if((h>>4)===3){const tl=(body[0]<<8)|body[1],t=td.decode(body.subarray(2,2+tl));let p=2+tl;if(h&6)p+=2;try{onMsg(t,td.decode(body.subarray(p)))}catch(e){}}}};
+  ws.onclose=()=>{up=false;clearInterval(ping);onUp&&onUp(false);later()};ws.onerror=()=>{}}
+ function later(){if(!dead)setTimeout(open,retry=Math.min(retry*2,15000))}
+ open();
+ return{get up(){return up},sub(t){subs.add(t);if(up)sub(t)},unsub(t){subs.delete(t);if(up)send(pkt(0xa2,[0,2,...str(t)]))},
+  pub(t,s){if(up)send(pkt(0x30,[...str(t),...te.encode(s)]))},close(){dead=true;clearInterval(ping);try{ws.close()}catch(e){}}}}
+// Online rooms: Trystero (direct WebRTC) where the networks allow it, plus an MQTT relay that always works.
+// Every message goes out with a sequence number; whichever path delivers it first wins.
+const MQ_URL='wss://broker.hivemq.com:8884/mqtt';
+function p2pRoom(){const T=window.Trystero;if(!T||!window.WebSocket)return null;
+ const P2P=!!window.RTCPeerConnection&&!/[?&]relay\b/.test(location.search),me=T.selfId,rooms={},byTopic={},tp=name=>'tsv1/tiger-spike/'+name;
+ const cfg={appId:'tiger-spike-sis-volleyball',relayConfig:{urls:['wss://relay.damus.io','wss://nos.lol','wss://relay.primal.net','wss://nostr.mom','wss://offchain.pub','wss://relay.nostr.net'],warnOnRelayFailure:false}};
+ const mq=mqConn(MQ_URL,(t,s)=>{const R=byTopic[t];if(!R)return;let m;try{m=JSON.parse(s)}catch(e){return}if(m&&typeof m.i==='string')R.got(m.i,m,false)},
+  up=>{for(const k in rooms){if(up)rooms[k].push(true);rooms[k].note()}if(NT.view==='lobby')mpRender()});
+ addEventListener('pagehide',()=>{for(const k in rooms)mq.pub(tp(k),JSON.stringify({i:me,bye:1}))});
+ function mk(name){let room=null,act=null;const topic=tp(name);
+  if(P2P)try{room=T.joinRoom(cfg,name);act=room.makeAction('pr')}catch(e){room=act=null}
+  const R={mine:{},pm:new Map(),subs:new Set(),dirty:false,q:0,lq:{},p2pAt:{},
+   all(){return[{peer:me,by:null,isMe:true,sameTab:true,kind:'human',guest:false,presence:R.mine,updatedAt:Date.now()},...R.pm.values()]},
    peers(){return R.all()},
+   // relay only when someone here can't be reached directly (and always on the heartbeat, so newcomers find us)
+   push(full){R.q++;const m={q:R.q,d:R.mine},t=Date.now();if(act)try{act.send(m)}catch(e){}
+    if(full||!act||[...R.pm.keys()].some(id=>!(t-(R.p2pAt[id]||0)<4000)))mq.pub(topic,JSON.stringify({i:me,q:m.q,d:m.d}))},
    presence(patch){for(const k in patch){if(patch[k]===null)delete R.mine[k];else R.mine[k]=patch[k]}
-    if(!R.dirty){R.dirty=true;setTimeout(()=>{R.dirty=false;try{act.send(R.mine)}catch(e){}},33)}R.note();return Promise.resolve()},
+    if(!R.dirty){R.dirty=true;setTimeout(()=>{R.dirty=false;R.push(false)},33)}R.note();return Promise.resolve()},
+   got(id,m,direct){if(id===me||!m||typeof m!=='object')return;const t=Date.now();if(direct)R.p2pAt[id]=t;
+    if(m.bye){if(R.pm.delete(id))R.note();delete R.lq[id];return}
+    const q=+m.q||0,e=R.pm.get(id);if(e&&q<=(R.lq[id]||0)){e.updatedAt=t;return}
+    R.lq[id]=q;R.pm.set(id,{peer:id,by:null,isMe:false,sameTab:false,kind:'human',guest:true,presence:m.d&&typeof m.d==='object'?m.d:{},updatedAt:t});R.note()},
    onPeers(fn){R.subs.add(fn);setTimeout(()=>fn({peers:R.all(),joined:[],left:[],updated:[]}),0);return()=>R.subs.delete(fn)},
    note(){if(R.nq)return;R.nq=true;setTimeout(()=>{R.nq=false;const ps=R.all();for(const f of R.subs)f({peers:ps,joined:[],left:[],updated:[]})},0)},
-   connected:()=>true,onConnection(fn){fn(true);return()=>{}},
-   leave(){clearInterval(R.hb);delete rooms[name];R.subs.clear();try{room.leave()}catch(e){}return Promise.resolve()}};
-  act.onMessage=(data,meta)=>{const id=meta&&meta.peerId||meta;if(typeof id!=='string')return;
-   R.pm.set(id,{peer:id,by:null,isMe:false,sameTab:false,kind:'human',guest:true,presence:data&&typeof data==='object'?data:{},updatedAt:Date.now()});R.note()};
-  room.onPeerJoin=id=>{try{act.send(R.mine,{target:id})}catch(e){}};
-  room.onPeerLeave=id=>{R.pm.delete(id);R.note()};
-  R.hb=setInterval(()=>{const t=Date.now();for(const [k,v] of R.pm)if(t-v.updatedAt>20000){R.pm.delete(k);R.note()}try{act.send(R.mine)}catch(e){}},5000);
+   connected:()=>mq.up,onConnection(fn){fn(true);return()=>{}},status:()=>({relay:mq.up}),
+   leave(){clearInterval(R.hb);mq.pub(topic,JSON.stringify({i:me,bye:1}));mq.unsub(topic);delete byTopic[topic];delete rooms[name];R.subs.clear();
+    if(room)try{room.leave()}catch(e){}return Promise.resolve()}};
+  if(act){act.onMessage=(data,meta)=>{const id=meta&&meta.peerId||meta;if(typeof id==='string')R.got(id,data,true)};
+   room.onPeerJoin=id=>{try{act.send({q:R.q,d:R.mine},{target:id})}catch(e){}};
+   // a dropped direct link doesn't mean they left: they may still be on the relay, so let the heartbeat decide
+   room.onPeerLeave=id=>{delete R.p2pAt[id]}}
+  byTopic[topic]=R;mq.sub(topic);
+  R.hb=setInterval(()=>{const t=Date.now();for(const [k,v] of R.pm)if(t-v.updatedAt>12000){R.pm.delete(k);R.note()}R.push(true)},4000);
   rooms[name]=R;return R}
  const L=mk('lobby');L.join=async name=>rooms[name]||mk(name);return L}
 
@@ -86,20 +122,25 @@ function onLobby(){
 function partyPeers(){return NT.party?NT.party.peers().filter(p=>p.presence&&p.presence.nm!=null):[]}
 const defCfg=()=>({mode:'vs',tg:11,df:1,auto:1,sl:[null,null,null,null,null,null]});
 async function joinParty(code,qp){if(NT.busy)return;NT.busy=true;
- try{await leaveParty(true);NT.code=code;NT.qp=!!qp;NT.lead=false;NT.cfg=null;NT.go=null;NT.goId='';NT.result='';
+ try{await leaveParty(true);NT.code=code;NT.qp=!!qp;NT.lead=false;NT.cfg=null;NT.go=null;NT.goId='';NT.result='';NT.sawLead=false;NT.seek=performance.now();
   NT.party=await NT.room.join('tsv-'+code);NT.me=myPeer(NT.party)||myPeer(NT.room);NT.joinedAt=performance.now();
+  setTimeout(()=>seekTimeout(code),SEEK_MS);
   partyPresence();NT.party.onPeers(()=>onParty(),e=>{NT.msg='Lost the party ('+(e&&e.code||'error')+')';leaveParty()});
   NT.view='party';mpRender()}
  catch(e){NT.msg='Could not join: '+(e&&e.code||e&&e.message||'error');NT.party=null;NT.view='lobby';mpRender()}
  finally{NT.busy=false}}
+const SEEK_MS=10000;
+function seekTimeout(code){if(!NT.party||NT.code!==code||!NT.seek)return;const qp=NT.qp;
+ leaveParty(true).then(()=>{if(qp){createParty(true);return}
+  NT.msg='No party found with code '+code.toUpperCase()+'. Check the code, and make sure the leader has the party screen open.';NT.view='lobby';mpRender()})}
 async function createParty(qp){let c=ntCode();const taken=openParties().map(p=>p.c);while(taken.includes(c))c=ntCode();
- await joinParty(c,qp);if(!NT.party)return;NT.lead=true;NT.cfg=defCfg();NT.joinedAt=-1e9;partyPresence();lobbyPresence();mpRender()}
+ await joinParty(c,qp);if(!NT.party)return;NT.lead=true;NT.seek=0;NT.sawLead=true;NT.cfg=defCfg();NT.joinedAt=-1e9;partyPresence();lobbyPresence();mpRender()}
 async function quickPlay(){AU.click();NT.msg='';
  const o=openParties().filter(p=>!p.ing&&p.n<6).sort((a,b)=>b.n-a.n)[0];
  if(o)await joinParty(o.c,true);else await createParty(true)}
 async function leaveParty(silent){const P=NT.party;
  if(G.net)endNet('');
- NT.party=null;NT.lead=false;NT.go=null;NT.cfg=null;NT.code='';NT.qp=false;
+ NT.party=null;NT.lead=false;NT.seek=0;NT.sawLead=false;NT.go=null;NT.cfg=null;NT.code='';NT.qp=false;
  if(P){try{await P.leave()}catch(e){}}
  lobbyPresence();if(!silent){NT.view='lobby';mpRender()}}
 function partyPresence(){if(!NT.party)return;
@@ -108,8 +149,10 @@ function partyPresence(){if(!NT.party)return;
 function leaderPeer(ps){const L=ps.filter(p=>p.presence.lead).sort(cmpPeer)[0];return L||null}
 function onParty(){if(!NT.party)return;const ps=partyPeers(),now=performance.now();
  let L=leaderPeer(ps);
- // nobody leads (the leader left): the lowest id takes over, after a moment so a newcomer doesn't grab it
- if(!L&&now-NT.joinedAt>1500){const lo=ps.slice().sort(cmpPeer)[0];if(lo&&lo.isMe){NT.lead=true;NT.cfg=NT.cfg||defCfg();partyPresence();lobbyPresence()}}
+ if(L){NT.sawLead=true;if(NT.seek){NT.seek=0;NT.msg='';mpRender()}}
+ // nobody leads (the leader left): the lowest id takes over, after a moment so a newcomer doesn't grab it.
+ // Only someone who has seen this party's leader may, so a mistyped code never turns into an empty party.
+ if(!L&&NT.sawLead&&now-NT.joinedAt>1500){const lo=ps.slice().sort(cmpPeer)[0];if(lo&&lo.isMe){NT.lead=true;NT.cfg=NT.cfg||defCfg();partyPresence();lobbyPresence()}}
  else if(L&&!L.isMe&&NT.lead){if(!NT.go){NT.lead=false;partyPresence();lobbyPresence()}}
  L=leaderPeer(partyPeers());
  if(L&&!L.isMe){const c=L.presence.cfg;if(c&&typeof c==='object')NT.cfg=sanCfg(c)}
@@ -267,7 +310,7 @@ function mpRender(){const el=scr('mpBody');if(!el)return;const v=NT.view;scr('mp
  if(v==='connecting'){el.innerHTML='<div class="mpnote">Connecting…</div>';return}
  if(v==='off'){el.innerHTML='<div class="mpnote">Online play couldn\'t start in this browser. Try an up-to-date Chrome, Safari or Edge.</div>';return}
  if(v==='lobby'){const ps=openParties(),here=NT.lobby?NT.lobby.peers().length:1;
-  el.innerHTML=`<div class="mprow"><label class="mpnm">Your name <input id="mpName" maxlength="14" value="${esc(NT.nm)}"></label><span class="stat">${here} online</span></div>
+  el.innerHTML=`<div class="mprow"><label class="mpnm">Your name <input id="mpName" maxlength="14" value="${esc(NT.nm)}"></label><span class="stat">${NT.lobby&&NT.lobby.status&&!NT.lobby.status().relay?'Connecting…':here+' online'}</span></div>
   <button class="btn big" id="bQuick">⚡ Quick play</button>
   <div class="mprow"><button class="btn ghost sm" id="bCreate">＋ New party</button><input id="mpCode" maxlength="4" placeholder="CODE"><button class="btn ghost sm" id="bJoin">Join</button></div>
   <div class="mplist">${ps.length?ps.map(p=>`<div class="mpp"><b>${esc(p.c.toUpperCase())}</b><span>${esc(p.ld||'Someone')}'s party · ${p.n}/6 · ${p.m==='coop'?'Co-op':'VS'}${p.ing?' · in a match':''}</span><button class="btn xs" data-c="${esc(p.c)}">Join</button></div>`).join(''):'<div class="mpnote sm">No open parties yet. Quick play makes one, and your friends can join it.</div>'}</div>`;
@@ -276,6 +319,8 @@ function mpRender(){const el=scr('mpBody');if(!el)return;const v=NT.view;scr('mp
   scr('bJoin').onclick=()=>{const c=scr('mpCode').value.trim().toLowerCase();if(/^[a-z0-9]{4}$/.test(c)){AU.click();joinParty(c,false)}else{NT.msg='Codes are 4 letters';mpRender()}};
   el.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{AU.click();joinParty(b.dataset.c,false)});
   el.querySelectorAll('input').forEach(i=>i.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'&&i.id==='mpCode')scr('bJoin').click()}));return}
+ if(NT.seek){el.innerHTML=`<div class="mpnote">Looking for party <b>${esc(NT.code.toUpperCase())}</b>…</div><div class="mprow"><button class="btn ghost xs" id="bLeave">Cancel</button></div>`;
+  scr('bLeave').onclick=()=>{AU.click();leaveParty()};return}
  // party
  const ps=partyPeers(),L=leaderPeer(ps),me=NT.lead,c=NT.cfg||defCfg(),nmOf=id=>{const p=ps.find(q=>q.peer===id);return p?cleanNm(p.presence.nm)||'Player':''};
  const slot=(t,i)=>{const id=c.sl[t*3+i],r=ROLES[i];return `<div class="mps${id===NT.me?' me':''}${me?' ed':''}" data-s="${t*3+i}" style="--rc:${ROLE_COL[r]}"><i>${r}</i><b>${id?esc(nmOf(id))+(id===NT.me?' (you)':''):'🤖 Bot'}</b></div>`};
