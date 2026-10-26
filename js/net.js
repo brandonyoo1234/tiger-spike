@@ -70,8 +70,8 @@ function p2pRoom(){const T=window.Trystero;if(!T||!window.WebSocket)return null;
    // relay only when someone here can't be reached directly (and always on the heartbeat, so newcomers find us)
    push(full){R.q++;const m={q:R.q,d:R.mine},t=Date.now();if(act)try{act.send(m)}catch(e){}
     if(full||!act||[...R.pm.keys()].some(id=>!(t-(R.p2pAt[id]||0)<4000)))mq.pub(topic,JSON.stringify({i:me,q:m.q,d:m.d}))},
-   presence(patch){for(const k in patch){if(patch[k]===null)delete R.mine[k];else R.mine[k]=patch[k]}
-    if(!R.dirty){R.dirty=true;setTimeout(()=>{R.dirty=false;R.push(false)},33)}R.note();return Promise.resolve()},
+   presence(patch,urgent){for(const k in patch){if(patch[k]===null)delete R.mine[k];else R.mine[k]=patch[k]}
+    if(urgent)R.push(false);else if(!R.dirty){R.dirty=true;setTimeout(()=>{R.dirty=false;R.push(false)},33)}R.note();return Promise.resolve()},
    got(id,m,direct){if(id===me||!m||typeof m!=='object')return;const t=Date.now();if(direct)R.p2pAt[id]=t;
     if(m.bye){if(R.pm.delete(id))R.note();delete R.lq[id];return}
     const q=+m.q||0,e=R.pm.get(id);if(e&&q<=(R.lq[id]||0)){e.updatedAt=t;return}
@@ -210,7 +210,10 @@ function endNet(why){if(!G.net)return;const my=NT.slot<0?-1:NT.slot/3|0,sc=G.sco
 /* ---- host: read everyone's buttons, send the state ---- */
 function hostInputs(ps){for(const p of ps){const R=NT.rin[p.peer],v=p.presence.in;if(!R)continue;
  if(v&&typeof v==='object'){const I=R.I;I.l=v.l?1:0;I.r=v.r?1:0;I.u=v.u?1:0;I.d=v.d?1:0;I.hold=v.h?1:0;
-  if(R.pc!==null&&+v.pc>R.pc)I.buf=.16;R.pc=+v.pc||0}
+  if(R.pc!==null&&+v.pc>R.pc)I.buf=.16;R.pc=+v.pc||0;
+  // each player moves themselves on their own screen; the host takes where they say they are
+  const P=G.players[R.i];if(P&&isFinite(v.x)&&(v.x!==R.lx||v.vx!==R.lvx)){R.lx=v.x;R.lvx=v.vx;
+   if(!P.dive&&!P.serveStage&&(G.state==='rally'||G.state==='serve')){P.x=clamp(+v.x,sideLo(P.team),sideHi(P.team));if(isFinite(v.vx))P.vx=clamp(+v.vx,-P.spd*1.3,P.spd*1.3)}}}
  if(p.presence.pg)NT.pe[R.i]=+p.presence.pg||0}
  // someone left mid-match: a bot takes their spot
  for(const k in NT.rin)if(!ps.some(p=>p.peer===k)){const R=NT.rin[k],P=G.players[R.i];if(P){P.in=null;P.human=false;P.pn=''}G.ins=G.players.filter(q=>q.in).map(q=>q.in);delete NT.rin[k]}}
@@ -240,8 +243,9 @@ function applySnap(s){const now=performance.now();NT.lastSnap=now;
  TM[0].next=G.players[g[7]]||null;TM[1].next=G.players[g[8]]||null;
  (s.p||[]).forEach((a,i)=>{const P=G.players[i];if(!P||!Array.isArray(a))return;
   const tx=a[0]+a[2]*L,air=a[1]>0||a[3]>0,th=air?Math.max(0,a[1]+a[3]*L-.5*GP*L*L):0;
+  if(P.own){P.vh=+a[3]||0;if(!(IN.r-IN.l))P.face=a[4]<0?-1:1;P.eh=th-P.h;if(Math.abs(P.eh)>200){P.h=th;P.eh=0}}else{
   P.vx=+a[2]||0;P.vh=+a[3]||0;P.face=a[4]<0?-1:1;
-  P.ex=tx-P.x;P.eh=th-P.h;if(Math.abs(P.ex)>260){P.x=tx;P.ex=0}if(Math.abs(P.eh)>200){P.h=th;P.eh=0}
+  P.ex=tx-P.x;P.eh=th-P.h;if(Math.abs(P.ex)>260){P.x=tx;P.ex=0}if(Math.abs(P.eh)>200){P.h=th;P.eh=0}}
   const sw=a[5];if(Array.isArray(sw)){const t=+sw[1]+L;if(!P.swing||P.swing.pose!==sw[0]||Math.abs(P.swing.t-t)>.08)P.swing={pose:String(sw[0]),t,done:!!sw[2],hitAt:sw[3]<0?null:+sw[3],dur:+sw[4]||.3,best:0,pd:0,R:70};else P.swing.done=!!sw[2]}else P.swing=null;
   const dv=a[6];if(Array.isArray(dv)){const t=+dv[0]+L;if(!P.dive||Math.abs(P.dive.t-t)>.08)P.dive={t,dir:dv[1]<0?-1:1,end:+dv[2]||.72,hit:!!dv[3]};else P.dive.hit=!!dv[3]}else P.dive=null;
   const f=+a[7]||0;P.armed=!!(f&1);P.recov=!!(f&2);P.ready=!!(f&4);if(i!==NT.slot)P.human=!!(f&8);
@@ -268,14 +272,24 @@ function replay(e){if(!e||typeof e!=='object')return;const P=G.players[e.p];
  else if(e.k==='cine'){NOBAN=1;try{
   if(e.c==='spike'&&P)cineSpike(P,RAR[P.ch.rar]);else if(e.c==='ult'&&P)cineUlt(P,RAR[P.ch.rar],String(e.n||''));else if(e.c==='sig'&&P)cineSig(P,RAR[P.ch.rar],String(e.n||''));
   else if(e.c==='dig'&&P)cineDig(P,RAR[P.ch.rar]);else if(e.c==='block'&&P)cineBlock(P,RAR[P.ch.rar]);else if(e.c==='kc')killCam();else if(e.c==='kx')killCancel()}finally{NOBAN=0}}}
+// your own player runs on your screen with no wait: arrows, and the auto-run to the ball the host would do for you
+function ownMove(P,dt){const I=IN,B=ball,grounded=P.h<=0&&P.vh<=0;
+ if(P.dive||P.serveStage||!(G.state==='rally'||G.state==='serve'))return false;
+ let mx=I.r-I.l;
+ if(!mx&&B.live&&!B.dead&&!B.serving){const p=P.A.p,easy=P.role!=='WS';if(p&&P.h<=6&&(easy?p.kind!=='idle':I.hold&&p.kind==='play'))mx=Math.abs(p.gx-P.x)<6?0:clamp((p.gx-P.x)/48,-1,1)}
+ const sp=P.spd*(P.swing&&grounded?.5:1)*(grounded?1:.8),a=grounded?5200:(P.armed?2200:900);
+ P.vx+=clamp(mx*sp-P.vx,-a*dt,a*dt);if(mx)P.face=mx>0?1:-1;
+ P.x=clamp(P.x+P.vx*dt,sideLo(P.team),sideHi(P.team));if(P.x<=sideLo(P.team)+.5||P.x>=sideHi(P.team)-.5)P.vx*=.3;
+ P.ex=0;return true}
 function clientFrame(rdt){const now=performance.now();
  G.time+=rdt;G.t+=rdt;if(CAM.hs>0)CAM.hs-=rdt;if(D.slowT>0){D.slowT-=rdt;if(D.slowT<=0)D.slowV=1}CAM.slow=1;
  NET.v+=(-NET.sway*180-NET.v*6)*rdt;NET.sway+=NET.v*rdt;
  for(let i=DECAL.length-1;i>=0;i--){DECAL[i].t+=rdt;if(DECAL[i].t>6)DECAL.splice(i,1)}
  const k=1-Math.exp(-14*rdt);
  for(const P of G.players){
-  if(!P.dive&&!P.serveStage&&G.state!=='point'&&G.state!=='intro')P.x+=P.vx*rdt;else if(P.dive)P.x+=P.vx*rdt;
-  if(P.ex){const c=P.ex*k;P.x+=c;P.ex-=c}P.x=clamp(P.x,sideLo(P.team),sideHi(P.team));
+  P.own=P===G.ctrl&&ownMove(P,rdt);
+  if(!P.own){if(!P.dive&&!P.serveStage&&G.state!=='point'&&G.state!=='intro')P.x+=P.vx*rdt;else if(P.dive)P.x+=P.vx*rdt;
+   if(P.ex){const c=P.ex*k;P.x+=c;P.ex-=c}P.x=clamp(P.x,sideLo(P.team),sideHi(P.team))}
   if(P.h>0||P.vh>0){P.vh-=GP*rdt;P.h+=P.vh*rdt;if(P.h<=0){P.h=0;P.vh=0}}
   if(P.eh){const c=P.eh*k;P.h=Math.max(0,P.h+c);P.eh-=c}
   if(P.swing)P.swing.t+=rdt;if(P.dive)P.dive.t+=rdt;if(P.land>0)P.land-=rdt;
@@ -290,8 +304,9 @@ function clientFrame(rdt){const now=performance.now();
  if(G.ctrl&&B.live&&G.state==='rally')aiPlan(G.ctrl,1);else if(G.ctrl)G.ctrl.A.p=null;
  FX.update(rdt);
  // send my buttons (only when they change) and a ping now and then
- if(NT.party&&NT.slot>=0){const v={l:IN.l,r:IN.r,u:IN.u,d:IN.d,h:IN.hold,pc:NT.pc},ks=JSON.stringify(v);NT.inT-=rdt;
-  if(ks!==NT.inSent&&NT.inT<=0||now-NT.pgSent>500){const pa={in:v};NT.inSent=ks;NT.inT=.03;if(now-NT.pgSent>500){NT.pgSent=now;pa.pg=Math.round(now)}NT.party.presence(pa).catch(()=>{})}}
+ if(NT.party&&NT.slot>=0){const P=G.ctrl,v={l:IN.l,r:IN.r,u:IN.u,d:IN.d,h:IN.hold,pc:NT.pc};if(P&&P.own){v.x=Math.round(P.x);v.vx=Math.round(P.vx)}
+  const ks=JSON.stringify(v),hit=NT.pc!==NT.pcSent;NT.inT-=rdt;
+  if(hit||ks!==NT.inSent&&NT.inT<=0||now-NT.pgSent>500){const pa={in:v};NT.inSent=ks;NT.pcSent=NT.pc;NT.inT=.025;if(now-NT.pgSent>500){NT.pgSent=now;pa.pg=Math.round(now)}NT.party.presence(pa,hit).catch(()=>{})}}
  if(NT.overT>0){NT.overT-=rdt;if(NT.overT<=0)endNet('fin')}
  else if(now-NT.lastSnap>8000)endNet('Lost connection to the host')}
 // count presses (keyboard + touch both go through press())
