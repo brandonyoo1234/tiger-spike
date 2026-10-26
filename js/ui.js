@@ -34,8 +34,8 @@ function roleLines(c,r){const rs=roleStats(c);
  if(r==='WS'){const sp=specOf(c);return[['STYLE',TRAIT[c.spk].n],['SPIKE',rs.spike]].concat(sp?[[SPEC[sp].n,SPEC[sp].d]]:[])}
  return[['SPEED',r1(rs.lspd/70)],['DIG',rs.dig]].concat(my)}
 // active + passives, each with a plain-English description so you know how to use it
-function abilHTML(c){const A=ABIL[c.act];
- return `<div class="ab"><div class="act"><span>ACTIVE · full HYPE</span><b>${A.n}</b><p>${A.d}</p></div>${(c.pas||[]).map(k=>`<div class="pas"><span>PASSIVE</span><b>${ABIL[k].n}</b><p>${ABIL[k].d}</p></div>`).join('')}</div>`}
+function abilHTML(c){const A=ABIL[c.act],M=c.mpas&&MYTH_PAS[c.name];
+ return `<div class="ab">${M?`<div class="my"><span>MYTHIC PASSIVE · only ${c.name}</span><b>${M.n}</b><p>${M.d}</p></div>`:''}<div class="act"><span>ACTIVE · full HYPE</span><b>${A.n}</b><p>${A.d}</p></div>${(c.pas||[]).map(k=>`<div class="pas"><span>PASSIVE</span><b>${ABIL[k].n}</b><p>${ABIL[k].d}</p></div>`).join('')}</div>`}
 function cardHTML(id,r){const c=abilFor(CH[id],r),ra=RAR[c.rar];
  return `<div class="face h" style="--c:${ra.col}"><img src="${pSrc(id)}" ${pSty(id)}><div class="info"><div class="rar">${ra.name}</div><div class="nm">${c.name}</div><div class="tt">#${c.num} · ${POS_NAME[c.pos]} · ${roleLines(c,r).map(([k,v])=>`${k} <b>${v}</b>`).join(' · ')}</div>
   ${abilHTML(c)}</div></div>`}

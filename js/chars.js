@@ -7,7 +7,7 @@ const SIS_POOL={
  OPP:['Ryan','Ian','Andy','Sean Kim','Jioong'],
  L:['Tevin','Yumin','Jasmine']};
 const POS_NAME={S:'Setter',OH:'Outside',MB:'Middle',OPP:'Opposite',L:'Libero'};
-const GIRLS=['Lauren','Sohee','Soojin','Katie','Grace','Jasmine'];
+const GIRLS=['Lauren','Sohee','Soojin','Katie','Grace','Jasmine','Seungbie'];
 function hsh(s){let h=2166136261;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);return h>>>0}
 function srng(seed){let a=seed|0;return()=>{a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 const spick=(r,a)=>a[Math.floor(r()*a.length)];
@@ -119,6 +119,15 @@ function giveAbil(c,ro=posRole(c.pos)){const r=srng(hsh('ab'+c.name+(ro===posRol
  c.pas=pas;return c}
 const has=(P,id)=>!!(P.ch&&P.ch.pas&&P.ch.pas.includes(id));
 ROSTER.forEach(c=>giveAbil(c));
+// every mythic has one passive nobody else gets, with its own animation on court (ults.js: mythFrame/mythHit/mythDraw)
+const MYTH_PAS={Brandon:{id:'wings',n:'Seraph Wings',d:'Golden wings unfold on every jump: he hangs at the top and his spikes explode in burning feathers.'},
+ McCarthy:{id:'storm',n:'Storm Charge',d:'Every touch stores a charge. At 3 charges his next spike throws chain lightning that stuns the two closest defenders.'},
+ Freddy:{id:'horizon',n:'Event Horizon',d:'A tiny black hole follows him: balls dropping near him get pulled straight into his arms.'},
+ Dom:{id:'wildfire',n:'Wildfire Set',d:'His sets catch fire. Whoever spikes one swings harder and the ball explodes off the hand.'},
+ Lauren:{id:'curtain',n:'Iron Curtain',d:'Giant steel hands rise with her block. She stuffs far more often, and a lot of them become MONSTER BLOCKS.'},
+ Yumin:{id:'angel',n:'Guardian Angel',d:'Once per rally, a ball about to land out of reach summons angel wings: she warps under it and digs it perfectly.'}};
+ROSTER.forEach(c=>{if(c.rar==='mythic'&&MYTH_PAS[c.name])c.mpas=MYTH_PAS[c.name].id});
+const hasM=(P,id)=>!!(P.ch&&P.ch.mpas===id);
 // a card drafted into a different role gets that role's skills (a libero never carries a spike skill)
 const _rab={};
 function abilFor(c,ro){if(!c||posRole(c.pos)===ro)return c;const k=c.id+ro;return _rab[k]||(_rab[k]=giveAbil(Object.create(c),ro))}
@@ -449,7 +458,8 @@ function portrait(id,team=0,mood=''){const key=id+team+mood;if(_port[key])return
  return _port[key]=cv.toDataURL()}
 // AI-drawn portraits: girls get girl art, boys get boy art, picked from the name so a player always keeps the same face
 const AI_G=['aiko','luna','nova','riley','vega','zoe'],AI_B=['ben','diego','kai','marcus','ryu','sam'];
-const AI_OWN=new Set(['dom','chase','lauren','mccarthy','seunghunlee','freddy','yuchan','brandon','justin','yumin','jasmine']);
+// every SIS player has their own portrait (assets/portraits/p_<id>.jpg); the generic faces are only a fallback
+const AI_OWN=new Set(ROSTER.map(c=>c.id));
 function portVar(id){if(AI_OWN.has(id))return{flip:0,px:50,py:20,hue:0};const h=hsh('pv'+id);return{flip:h&1,px:30+(h>>1)%5*10,py:10+(h>>4)%3*10,hue:((h>>6)%7-3)*6}}
 function aiPort(id){const c=CH[id];if(!c)return null;if(AI_OWN.has(id))return 'assets/portraits/p_'+id+'.jpg';const gi=GIRLS.indexOf(c.name);
- return 'assets/portraits/'+(c.girl?(gi>=0?AI_G[gi]:AI_G[hsh('f'+id)%6]):AI_B[hsh('m'+id)%6])+'.jpg'}
+ return 'assets/portraits/'+(c.girl?(gi>=0&&gi<6?AI_G[gi]:AI_G[hsh('f'+id)%6]):AI_B[hsh('m'+id)%6])+'.jpg'}

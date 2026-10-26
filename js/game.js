@@ -173,7 +173,7 @@ function updPlayer(P,dt){
  P.x=clamp(P.x+P.vx*dt,sideLo(P.team),sideHi(P.team));
  if(P.x<=sideLo(P.team)+.5||P.x>=sideHi(P.team)-.5)P.vx*=.3;
  // vertical
- if(P.h>0||P.vh>0){P.vh-=GP*dt*(P.armed&&has(P,'hang')&&Math.abs(P.vh)<380?.6:1);P.h+=P.vh*dt;if(P.h<=0){const imp=-P.vh;P.h=0;P.vh=0;P.armed=false;P.recov=false;if(!P.dive)P.land=.16;if(imp>380&&P.ch.rar==='mythic')mythLand(P);if(imp>380)FX.burst(P.x,FLOOR-3,5,{col:'#d9c9a8',v0:30,v1:140,ang:-Math.PI/2,spread:1.2,l0:.2,l1:.4,s0:2,s1:5,drag:3,add:false,kind:'dot'})}}
+ if(P.h>0||P.vh>0){P.vh-=GP*dt*(P.armed&&(has(P,'hang')||hasM(P,'wings'))&&Math.abs(P.vh)<380?.6:1);P.h+=P.vh*dt;if(P.h<=0){const imp=-P.vh;P.h=0;P.vh=0;P.armed=false;P.recov=false;if(!P.dive)P.land=.16;if(imp>380&&P.ch.rar==='mythic')mythLand(P);if(imp>380)FX.burst(P.x,FLOOR-3,5,{col:'#d9c9a8',v0:30,v1:140,ang:-Math.PI/2,spread:1.2,l0:.2,l1:.4,s0:2,s1:5,drag:3,add:false,kind:'dot'})}}
  // pending swing (jump-block)
  if(P.pending){P.pending.t-=dt;if(P.pending.t<=0){startSwing(P,P.pending.pose);P.pending=null}}
  // swing
@@ -186,7 +186,7 @@ function updPlayer(P,dt){
 
 function contact(P){const s=P.swing,B=ball;if(s.pose==='block'||s.done||!B.live||B.dead||B.cd>0||B.ult&&!B.ult.done)return;
  if(s.hitAt==null&&s.t<.05)return;
- if(B.lastHitter===P&&B.lastTeam===P.team&&!B.serving&&B.touches>0)return;
+ if(B.lastHitter===P&&B.lastTeam===P.team&&!B.serving&&B.touches>0||B.kind==='mblock')return;
  const ip=ideal(P,s.pose==='serve'?'spike':s.pose),R=ip.r*(.86+P.ctl*.025)*(P.human?(P.role==='WS'?1.12:1.25):1)*[.9,.96,1,1.05,1.1][P.ri]+Math.min(24,Math.hypot(B.vx,B.vy)*.02);
  if((B.x-NETX)*dirOf(P.team)>-4)return; // the ball has to be on your side
  // attack swings meet the ball at the planned moment: the hand is where the circle is, and the ball either is there or isn't
@@ -254,7 +254,7 @@ function hitBall(P,s,ratio,forceOver){s.hitT=s.t;if(ball.killcam)killCancel();
    else{const tx=NETX-d*(130+aimU*40)+gauss()*sg*.7*ctl,r=arc(x0,y0,tx,338,[190,205,230,300][q]);vx=r.vx;vy=r.vy;B.toss='high'}break}
   case 'over':{const tx=dump?NETX+d*rnd(120,220):NETX+d*(500+aimU*250)+gauss()*sg*ctl;let ay=dump?NETTOP-60:[230,250,290,360][q],r;for(let i=0;i<16;i++){r=arc(x0,y0,tx,FLOOR-BR,ay);const tc=(NETX-x0)/r.vx,yc=y0+r.vy*tc+.5*GB*tc*tc;if(!(tc>0)||yc<NETTOP-BR-10)break;ay-=28}vx=r.vx;vy=r.vy;crosses=true;break}
   case 'spike':{const tt=TOSS[prevKind==='set'?prevToss:'high']||TOSS.high,trait=P.ch.spk,back=Math.abs(P.x-NETX)>290;
-   const pw=P.pow+tt.pw+(q===0?1.2:0)+(P.role==='WS'?0:-1.5)+(back&&has(P,'boom')?1.2:0);
+   const pw=P.pow+tt.pw+(q===0?1.2:0)+(P.role==='WS'?0:-1.5)+(back&&has(P,'boom')?1.2:0)+(B.fire===P.team&&B.fireEnd>D.clock?1:0);
    const lat=(B.x-P.x)*d,u=clamp((lat-26)/55,-1,1);
    let dist=spikeDist(u)+aimU*80;if(trait==='cross')dist-=60;
    let T0=lerp(.27,.15,clamp(pw/12,0,1))*[.8,1,1.15,1.5][q]*RSPK[P.ri]*(P.spec==='power'?.85:P.spec==='mythic'?.82:1)*(human&&q===0?.8:1);if(trait==='speed')T0*=.84;
@@ -285,7 +285,7 @@ function hitBall(P,s,ratio,forceOver){s.hitT=s.t;if(ball.killcam)killCancel();
   const add=([17,9,3,0][q]+(kind==='spike'?4:0))*(has(P,'wind')?1.3:1);
   if(!ult&&!sigPlay){const was=P.hype;P.hype=Math.min(100,P.hype+add);if(was<100&&P.hype>=100){banner({text:'HYPE MAX',sub:actN(P).toUpperCase()+' — '+(ABIL[P.ch.act]?ABIL[P.ch.act].how:'NEXT PERFECT HIT'),col:RAR[P.ch.rar].col,dur:1.8,to:P.id});if(me)AU.ult(0)}}
   else{P.hype=0;if(me)G.stats.ults++}}
- hitFX(P,q,kind,B.x,B.y);
+ hitFX(P,q,kind,B.x,B.y);mythHit(P,kind,B);
  // cinematics
  const perfSpk=kind==='spike'&&q===0&&human;
  if(D.pre&&!perfSpk)endPre();D.pre=false;
@@ -317,18 +317,25 @@ function spikeFX(P,q){const B=ball,a=Math.atan2(B.vy,B.vx),col=P.ch.fx;
 function blockCheck(B){if(!B.live||B.blk||B.serving||B.lastTeam<0||B.ult&&!B.ult.done)return;
  for(const P of G.players){const s=P.swing;if(!s||s.pose!=='block'||s.done||P.team===B.lastTeam)continue;
   const d=dirOf(P.team);if(B.vx*d>=0)continue;
-  const gap=Math.abs(P.x-NETX);if(gap>130)continue;
-  const px=NETX-d*clamp(gap-30,8,60),top=FLOOR-P.h-178;
-  if(Math.abs(B.x-px)>BR)continue;
+  const gap=Math.abs(P.x-NETX),cur=hasM(P,'curtain');if(gap>(cur?170:130))continue;
+  const px=NETX-d*clamp(gap-30,8,60),top=FLOOR-P.h-178-(cur?90:0);
+  if(Math.abs(B.x-px)>BR*(cur?2.2:1))continue;
   if(B.y<top-BR*.5||B.y>NETTOP+12)continue; // over the hands, or below the tape
   blockHit(P,B,s);return}}
 function blockHit(P,B,s){const d=dirOf(P.team),A=B.lastHitter,sp=sp2(B),human=!!P.in,x0=B.x,y0=B.y;B.blk=1;s.done=true;
  if(B.kind==='spike'&&A&&A.ch.spk==='pierce'&&sp>700&&Math.random()<.5){
   B.vx*=.8;B.vy*=.8;FX.ring(B.x,B.y,6,70,A.ch.fx,.3,3);AU.boom();shake(6);hitstop(.04);
   banner({text:'BLOCK BUSTER!',sub:A.name.toUpperCase()+' SMASHES THROUGH',col:A.ch.fx,dur:1.1});P.stun=.25;return}
- const timing=s.t>.06&&s.t<.38,stuffP=(timing?.55:.25)+(has(P,'palms')?.2:0)+(s.t<.2?.15:0)-(sp>1500?.15:0),toolP=.12+(A&&has(A,'tool')?.25:0),r0=Math.random();
+ // bots stuff less often (much less against a human hitter); a great block can become a MONSTER BLOCK that nobody digs
+ const timing=s.t>.06&&s.t<.38,vsH=!!(A&&A.in),cur=hasM(P,'curtain'),bot=human?1:vsH?.45:.75;
+ const stuffP=((timing?.45:.18)+(has(P,'palms')?.2:0)+(s.t<.2?.1:0)-(sp>1500?.15:0))*bot+(cur?.2:0),toolP=.12+(A&&has(A,'tool')?.25:0)+(vsH&&!human?.1:0),r0=Math.random();
+ const monP=(B.kind==='spike'?1:.5)*((timing?.08:.02)+(human&&timing?.14:0)+(P.ri>=3?.06:0)+(has(P,'palms')?.06:0))*(human?1:vsH?.4:1)+(cur?.3:0);
  B.cd=.12;B.evt++;B.hits++;B.gs=1;B.lastTeam=P.team;B.fx=null;B.unstop=false;TM[0].next=TM[1].next=null;
- if(r0<stuffP){ // stuffed straight back down on the hitter's side
+ if(Math.random()<monP){ // slammed straight down just over the net, far too fast to dig
+  const bx=NETX+d*(BR+6),by=Math.min(y0,NETTOP-BR-8),tx=NETX+d*rnd(90,200),Tt=.2;B.x=bx;B.y=by;B.vx=(tx-bx)/Tt;B.vy=(FLOOR-BR-by-.5*GB*Tt*Tt)/Tt;
+  B.lastHitter=P;B.touches=0;B.cross=true;B.kind='mblock';B.hot=1;B.unstop=true;B.fx={col:cur?'#c8d6ff':P.ch.fx,ri:P.ri,rar:P.ch.rar,mine:P};
+  if(P===G.ctrl)G.stats.blocks++;pasFX('monster',P,{x:Math.round(bx),y:Math.round(by),c:cur?1:0})}
+ else if(r0<stuffP){ // stuffed straight back down on the hitter's side
   const tx=NETX+d*rnd(60,260),Tt=.42;B.vx=(tx-x0)/Tt;B.vy=(FLOOR-BR-y0-.5*GB*Tt*Tt)/Tt;
   B.lastHitter=P;B.touches=0;B.cross=true;B.kind='stuff';B.hot=1;AU.boom();
   if(P===G.ctrl)G.stats.blocks++;
@@ -545,7 +552,7 @@ function aiThink(P,dt){
  const live=B.live&&!B.dead&&!B.serving;
  if(!live){moveTo(P,NETX-d*BASE[P.role]);return}
  if(A.evt!==B.evt){A.evt=B.evt;A.nx=gauss()*lerp(55,5,sk)*(Math.random()<lerp(.2,.02,sk)?3:1);A.jit=gauss()*lerp(.065,.012,sk);
-  const tt=TOSS[B.toss]||TOSS.high;A.blkOn=Math.random()<lerp(.4,.9,sk)*(.35+.65*tt.blk);A.blkD=lerp(.2,.09,sk)+Math.abs(gauss())*.04+(B.toss==='quick'?.13:0);A.blkT=0;A.thT=0}
+  const tt=TOSS[B.toss]||TOSS.high;A.blkOn=hasM(P,'curtain')||Math.random()<lerp(.4,.9,sk)*(.35+.65*tt.blk);A.blkD=lerp(.2,.09,sk)+Math.abs(gauss())*.04+(B.toss==='quick'?.13:0);A.blkT=0;A.thT=0}
  A.thT-=dt;if(A.thT<=0||!A.p){A.thT=lerp(.15,.04,sk);aiPlan(P,sk)}
  const p=A.p;if(!p)return;const grounded=P.h<=0&&P.vh<=0;
  if(p.kind==='play'){

@@ -14,9 +14,18 @@ function overNet(P,x0,y0,d){return (NETX-x0)*d>40||y0>NETTOP-70?[wp(NETX+d*30,NE
 function follow(B,u,h){const w=u.path[u.i];if(!w)return;
  if(w.hold){B.vx=B.vy=0;B.gs=0;w.ht=(w.ht||0)+h;if(w.ht>=w.hold){u.i++;w.on&&w.on(B,u)}return}
  if(w.home){w.x=w.home.x+w.home.face*8;w.y=headY(w.home)}
+ if(w.curve)return curveStep(B,u,w,h);
  const dx=w.x-B.x,dy=w.y-B.y,l=Math.hypot(dx,dy);
  if(l<w.sp*h*1.2+2&&!w.floor){B.x=w.x;B.y=w.y;u.i++;w.on&&w.on(B,u);return}
  B.gs=0;B.vx=dx/l*w.sp;B.vy=dy/l*w.sp}
+// a direct line to the target; if that line would clip the net it bends up just enough to skim over the tape (quadratic bezier)
+function curveStep(B,u,w,h){if(!w.p0)w.p0={x:B.x,y:B.y},w.s=0;const p0=w.p0,x2=w.x,y2=w.y;let cx=(p0.x+x2)/2,cy=(p0.y+y2)/2;
+ const a=(NETX-p0.x)*u.d,b=(x2-NETX)*u.d;
+ if(a>0&&b>0){const t=1/(1+Math.sqrt(b/Math.max(a,20))),yl=lerp(p0.y,y2,a/(a+b)),Y=NETTOP-70;
+  if(yl>Y){const k=2*t*(1-t);cx=NETX;cy=(Y-(1-t)*(1-t)*p0.y-t*t*y2)/k}}
+ const L=(Math.hypot(cx-p0.x,cy-p0.y)+Math.hypot(x2-cx,y2-cy)+Math.hypot(x2-p0.x,y2-p0.y))/2;
+ w.s=Math.min(1,w.s+w.sp*h/Math.max(L,1));const t=w.s,m=1-t,nx=m*m*p0.x+2*m*t*cx+t*t*x2,ny=m*m*p0.y+2*m*t*cy+t*t*y2;
+ B.gs=0;B.vx=(nx-B.x)/h;B.vy=(ny-B.y)/h;B.x=nx;B.y=ny;if(t>=1){u.i++;w.on&&w.on(B,u)}}
 const floorPt=(x,sp)=>wp(x,FLOOR+40,sp,{floor:true});
 const stunP=(q,t,k)=>{q.stun=Math.max(q.stun,t);q.swing=null;q.pending=null;q.dive=null;q[k||'zap']=t};
 function shockwave(x,d,pow,col){
@@ -31,14 +40,23 @@ function megaPop(B,x,d,col){B.vy=-3300;B.vx=d*240;B.gs=1;
  for(let i=0;i<26;i++){const a=-Math.PI/2+rnd(-.35,.35),sp=rnd(1400,3000);FX.add({x,y:FLOOR-10,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,drag:3,life:rnd(.25,.5),s:rnd(3,6),col:i%2?col:'#ffffff',kind:'streak'})}
  FX.text(x,FLOOR-220,'MEGA BOUNCE!','#ffe27a',64,1.4);AU.tone(90,.8,'sine',.6,260);shake(26);hitstop(.12)}
 function skyBolt(x,y,col,w){FX.bolt(x+rnd(-60,60),-260,x,y,'#ffffff',.22,w+2,40);FX.bolt(x+rnd(-80,80),-260,x,y,col,.3,w,55);FX.add({x,y,kind:'glow',s:90,s1:8,life:.25,col,drag:0})}
-function bonk(B,u,q,d){const col=u.P.ch.fx;
- stunP(q,1.7,'bonk');q.vx=d*420;
- FX.text(q.x,headY(q)-70,'BONK!!','#ffe27a',70,1.3);
- for(let i=0;i<14;i++)FX.add({x:B.x,y:B.y,vx:rnd(-700,700),vy:rnd(-900,-200),ay:1500,life:rnd(.5,.9),s:rnd(8,14),col:i%3?'#ffe27a':'#ffffff',kind:'star',vr:rnd(-12,12)});
- FX.ring(B.x,B.y,8,160,'#ffffff',.3,8);FX.ring(B.x,B.y,8,240,col,.5,4);
- B.x=q.x+q.face*6;B.y=headY(q)-26;B.vx=d*150;B.vy=-1150;B.gs=1;
- bonkSnd();AU.boom();hitstop(.16);slowmo(.25,.6);impactFrame(.12);shake(18);flash('#ffffff',.35);
- D.focus={kind:'player',P:q,z:1.45};after(.6,()=>{if(D.focus&&D.focus.P===q)D.focus={kind:'ball',z:1}})}
+// SKULL CRACK: the ball smashes off the defender's head, their skull "cracks" (cartoon), the point is scored on the spot and the ball rockets away
+function skullFX(x,y,col,big){
+ for(let i=0;i<9;i++){const a=i/9*6.28+rnd(-.2,.2),r=rnd(70,130)*(big?1.4:1);FX.bolt(x,y,x+Math.cos(a)*r,y+Math.sin(a)*r,i%2?'#ffffff':col,.45,3,12)}
+ for(let i=0;i<22;i++)FX.add({x,y,vx:rnd(-900,900),vy:rnd(-1100,-150),ay:2200,life:rnd(.5,1),s:rnd(8,16),col:i%3?'#f4ecd8':'#ffffff',kind:'shard',vr:rnd(-14,14),add:false});
+ for(let i=0;i<12;i++)FX.add({x,y,vx:rnd(-700,700),vy:rnd(-900,-200),ay:1500,life:rnd(.5,.9),s:rnd(8,14),col:i%3?'#ffe27a':'#ffffff',kind:'star',vr:rnd(-12,12)});
+ FX.add({x,y,kind:'glow',s:big?260:180,s1:10,life:.3,col:'#ffffff',drag:0});
+ FX.ring(x,y,8,big?320:220,'#ffffff',.35,9);FX.ring(x,y,8,big?440:300,col,.55,4);
+ FX.text(x,y-110,'CRACK!!','#ffffff',big?96:80,1.3);
+ bonkSnd();AU.noise(.3,900,.35,'lowpass');AU.boom();AU.boom();shake(big?30:22);flash('#ffffff',.45);impactFrame(.16);hitstop(.2);slowmo(.35,.7)}
+function bonk(B,u,q,d,keep){const col=u.P.ch.fx;
+ stunP(q,2.2,'bonk');q.crack=1.6;q.vx=d*520;q.vh=Math.max(q.vh,260);q.h=Math.max(q.h,1);
+ B.x=q.x+q.face*6;B.y=headY(q)-26;skullFX(B.x,B.y,col,keep);
+ nev({k:'skull',x:Math.round(B.x),y:Math.round(B.y),p:q.id,big:keep?1:0});
+ // ricochet: far up and away toward the back of their court, then it bounces on like any dead ball
+ B.vx=d*rnd(950,1150);B.vy=-rnd(1350,1550);B.gs=1;B.vr=d*40;
+ if(!keep)u.done=true;B.dead=true;scorePoint(u.P.team,'SMASH');
+ D.focus={kind:'player',P:q,z:1.5};after(.7,()=>{if(D.focus&&D.focus.P===q)D.focus={kind:'ball',z:.9}})}
 
 const ULT={
  tornado:{n:'Tornado Spike',tier:'epic',d:'The ball rips across the net inside a spinning cyclone that wobbles past every defender.',
@@ -56,8 +74,8 @@ const ULT={
   launch(P,x0,y0,d){return{path:[...overNet(P,x0,y0,d),floorPt(NETX+d*rnd(250,380),4600)]}},
   tick(B,u,h){if(Math.random()<h*60)FX.add({x:B.x,y:B.y,life:.25,s:18,s1:2,col:u.P.ch.fx,kind:'glow',drag:0})},
   land(B,u,x,d){megaPop(B,x,d,u.P.ch.fx);for(const q of oppsOf(u.P))if(Math.abs(q.x-x)<260)stunP(q,1,'bonk')}},
- skull:{n:'Skull Crusher',tier:'legendary',d:'The spike locks onto a defender and smashes off their head. BONK. They\'re seeing stars and the ball drops dead.',
-  launch(P,x0,y0,d){const q=headTarget(P);stunP(q,.55,'fear');return{q,path:[...overNet(P,x0,y0,d),wp(0,0,3600,{home:q,on:(B,u)=>{bonk(B,u,q,d);u.free=1}})]}},
+ skull:{n:'Skull Crusher',tier:'legendary',d:'The spike locks onto a defender and flies straight at their head. CRACK. The point is yours and the ball rockets off into the stands.',
+  launch(P,x0,y0,d){const q=headTarget(P);stunP(q,.55,'fear');return{q,path:[wp(0,0,3400,{home:q,curve:1,on:(B,u)=>{bonk(B,u,q,d);u.free=1}})]}},
   tick(B,u,h){if(!u.free&&Math.random()<h*60)FX.add({x:B.x,y:B.y,life:.2,s:14,s1:2,col:'#ff5a6a',kind:'glow',drag:0})},
   draw(g,B,u){if(u.free||!u.q)return;const q=u.q,x=q.x,y=headY(q),r=36+Math.sin(D.clock*20)*4;
    g.save();g.strokeStyle='#ff4060';g.lineWidth=3;g.globalAlpha=.85;g.beginPath();g.arc(x,y,r,0,7);g.moveTo(x-r-12,y);g.lineTo(x-r+8,y);g.moveTo(x+r-8,y);g.lineTo(x+r+12,y);g.moveTo(x,y-r-12);g.lineTo(x,y-r+8);g.moveTo(x,y+r-8);g.lineTo(x,y+r+12);g.stroke();g.restore()}},
@@ -87,9 +105,10 @@ const ULT={
    else if(Math.random()<h*40)FX.bolt(B.x,B.y,B.x-B.vx*.03+rnd(-20,20),B.y-B.vy*.03+rnd(-20,20),'#bff0ff',.1,3,18)},
   draw(g,B,u){g.save();g.globalCompositeOperation='lighter';glow(g,B.x,B.y,BR*4,'#7fd8ff',.6);g.restore()},
   land(B,u,x,d){skyBolt(x,FLOOR-10,'#7fd8ff',9);skyBolt(x+60,FLOOR-10,'#ffffff',5);shockwave(x,d,.8,'#7fd8ff');FX.text(x,FLOOR-230,'THUNDERSTRUCK','#bff0ff',58,1.3)}},
- godspike:{n:'God Spike',tier:'mythic',d:'Brandon only. Charges with lightning and zaps everyone, smashes a defender\'s head, then mega-bounces with an earthquake.',
-  launch(P,x0,y0,d){const q=headTarget(P);return{q,path:[wp(0,0,0,{hold:.42,on:(B,u)=>{for(const o of oppsOf(P)){skyBolt(o.x,headY(o),'#ffd23d',4);if(o!==q)stunP(o,1.6,'zap')}stunP(q,.6,'fear');flash('#fff2b0',.6);zapSnd();AU.boom();shake(16)}}),...overNet(P,x0,y0,d),wp(0,0,4200,{home:q,on:(B,u)=>{bonk(B,u,q,d);u.free=1;B.vy=-900}})]}},
-  tick(B,u,h){const w=u.path[u.i];if(w&&w.hold){if(Math.random()<h*18)skyBolt(B.x,B.y,Math.random()<.5?'#ffd23d':'#ffffff',3);CAM.dim=Math.max(CAM.dim,.45)}
+ godspike:{n:'God Spike',tier:'mythic',d:'Brandon only. Charges with lightning and zaps everyone, cracks a defender\'s skull for the point, then the ball mega-bounces with an earthquake.',
+  launch(P,x0,y0,d){const q=headTarget(P);return{q,path:[wp(0,0,0,{hold:.42,on:(B,u)=>{for(const o of oppsOf(P)){skyBolt(o.x,headY(o),'#ffd23d',4);if(o!==q)stunP(o,1.6,'zap')}stunP(q,.6,'fear');flash('#fff2b0',.6);zapSnd();AU.boom();shake(16)}}),wp(0,0,4000,{home:q,curve:1,on:(B,u)=>{bonk(B,u,q,d,1);u.free=1;B.vx=d*420;B.vy=-700}})]}},
+  tick(B,u,h){if(u.free){if(B.vy>0&&B.y>=FLOOR-BR-1){B.y=FLOOR-BR;u.done=true;ULT.godspike.land(B,u,B.x,u.d)}return}
+   const w=u.path[u.i];if(w&&w.hold){if(Math.random()<h*18)skyBolt(B.x,B.y,Math.random()<.5?'#ffd23d':'#ffffff',3);CAM.dim=Math.max(CAM.dim,.45)}
    else{if(Math.random()<h*90)FX.add({x:B.x,y:B.y,life:.3,s:20,s1:2,col:hsl(D.clock*600%360,100,65),kind:'glow',drag:0});if(Math.random()<h*30)FX.bolt(B.x,B.y,B.x+rnd(-90,90),B.y+rnd(-90,90),'#ffd23d',.1,2,18)}},
   draw(g,B,u){g.save();g.globalCompositeOperation='lighter';glow(g,B.x,B.y,BR*4.5,hsl(D.clock*500%360,100,65),.55);g.restore();ULT.skull.draw(g,B,u)},
   land(B,u,x,d){megaPop(B,x,d,'#ffd23d');shockwave(x,d,1.1,'#ffd23d');skyBolt(x,FLOOR-10,'#ffffff',10);FX.text(x,FLOOR-300,'GOD SPIKE','#ffd23d',80,1.6)}},
@@ -125,16 +144,28 @@ function startUlt(B,id,P,x0,y0,d){const U=ULT[id],st=U.launch(P,x0,y0,d);B.ult=O
 function ULTstep(B,h){const u=B.ult;if(!u||u.done)return;u.t+=h;
  if(!u.free)follow(B,u,h);const U=ULT[u.id];U.tick&&U.tick(B,u,h)}
 function ULTland(B,x){const u=B.ult;if(!u||u.done)return;u.done=true;const U=ULT[u.id];U.land&&U.land(B,u,x,u.d)}
-function ULTdraw(g){const B=ball,u=B.ult;
+function ULTdraw(g){const B=ball,u=B.ult;mythDraw(g);
  if(u&&!u.done){const U=ULT[u.id];U.draw&&U.draw(g,B,u)}
  // status: dizzy stars (bonk), electric crackle (zap), a red "!" (fear)
  for(const q of G.players){const y=headY(q)-30;
   if(q.bonk>0){for(let i=0;i<4;i++){const a=D.clock*5+i*Math.PI/2;g.save();g.translate(q.x+Math.cos(a)*34,y+Math.sin(a)*9);g.rotate(D.clock*4+i);g.fillStyle=i%2?'#ffe27a':'#ffffff';g.beginPath();for(let k=0;k<10;k++){const r=k%2?4:10,b=k*Math.PI/5;g.lineTo(Math.cos(b)*r,Math.sin(b)*r)}g.fill();g.restore()}}
   if(q.zap>0){if(Math.random()<.5)FX.bolt(q.x+rnd(-30,30),y-20+rnd(-20,20),q.x+rnd(-40,40),y+80+rnd(0,80),'#bff0ff',.06,2,12)}
+  if(q.crack>0)drawCrack(g,q);
   if(q.fear>0){g.save();g.fillStyle='#ff4060';g.font='bold 40px sans-serif';g.textAlign='center';g.fillText('!',q.x,y-30);g.restore()}}}
+// cartoon cracked skull over a bonked player's head: it pops in, a zigzag crack splits it and the halves fall apart
+function drawCrack(g,q){const T=1.6-q.crack,x=q.x,y=headY(q)-96,pop=T<.12?T/.12*1.25:T<.22?lerp(1.25,1,(T-.12)/.1):1,sp=Math.max(0,T-.35)*90,a=Math.min(1,q.crack*2.5);
+ g.save();g.translate(x,y);g.scale(pop,pop);g.globalAlpha=a;g.lineJoin='round';
+ for(const sd of[-1,1]){g.save();g.translate(sd*sp,sp*sp*.012);g.rotate(sd*Math.min(.6,sp*.006));
+  g.beginPath();g.moveTo(0,-34);if(sd<0){g.arc(0,-4,30,-Math.PI/2,Math.PI,true);g.lineTo(-18,26);g.lineTo(-4,26)}else{g.arc(0,-4,30,-Math.PI/2,0);g.lineTo(18,26);g.lineTo(4,26)}
+  const zz=[[0,-34],[6,-22],[-5,-10],[7,2],[-4,14],[4,26]];for(let i=zz.length-1;i>=0;i--)g.lineTo(sd<0?Math.min(zz[i][0],0)-2:Math.max(zz[i][0],0)+2,zz[i][1]);
+  g.closePath();g.fillStyle='#f4ecd8';g.fill();g.lineWidth=3;g.strokeStyle='#1a1418';g.stroke();
+  g.fillStyle='#1a1418';g.beginPath();g.arc(sd*12,-6,7,0,7);g.fill();g.restore()}
+ if(T<.35){g.strokeStyle='#1a1418';g.lineWidth=3;g.beginPath();[[0,-34],[6,-22],[-5,-10],[7,2],[-4,14],[4,26]].forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));g.stroke()}
+ g.restore()}
 // Flash Step: the human libero teleports under a ball that would otherwise land out of reach
 function ULTframe(dt){const B=ball;
- for(const q of G.players){if(q.bonk>0)q.bonk-=dt;if(q.zap>0)q.zap-=dt;if(q.fear>0)q.fear-=dt}
+ mythFrame(dt);
+ for(const q of G.players){if(q.crack>0)q.crack-=dt;if(q.bonk>0)q.bonk-=dt;if(q.zap>0)q.zap-=dt;if(q.fear>0)q.fear-=dt}
  for(const H of G.players){
  if(!H.in||H.role!=='L'||H.ch.act!=='flash'||H.hype<100||!B.live||B.serving||B.ult&&B.ult.lock)continue;
  if(B.lastTeam===H.team||H.dive||H.h>0||H.stun>0||(H.swing&&!H.swing.done)||G.state!=='rally')continue;
@@ -144,3 +175,85 @@ function ULTframe(dt){const B=ball;
  for(let i=0;i<6;i++)FX.add({x:lerp(H.x,tx,i/5),y:FLOOR-90,kind:'glow',s:60,s1:4,life:.3,col:'#7fd8ff',drag:0});
  FX.text(tx,FLOOR-260,'FLASH STEP','#7fd8ff',44,.9);zapSnd();
  H.x=tx;H.vx=0;H.face=d;const s=H.swing={t:.1,pose:'bump',best:0,pd:0,done:true,R:70,dur:SWING};hitBall(H,s,0);return}}
+
+/* ===== mythic passives: one per mythic, each with its own look. The host decides, pasFX shows it everywhere ===== */
+const feathers=(x,y,n,col)=>{for(let i=0;i<n;i++)FX.add({x:x+rnd(-20,20),y:y+rnd(-20,20),vx:rnd(-260,260),vy:rnd(-320,40),ay:160,drag:2.4,life:rnd(.8,1.5),s:rnd(7,12),col:i%3?col:'#ffffff',kind:'shard',vr:rnd(-6,6),add:false})};
+function pasFX(k,P,o={}){nev(Object.assign({k:'mp',m:k,p:P.id},o));pasShow(k,P,o)}
+function pasShow(k,P,o){const x=+o.x||P.x,y=+o.y||headY(P)+40;
+ if(k==='storm'){P.chg=clamp(+o.n||0,0,3);FX.ring(P.x,headY(P)+70,12,60,'#bff0ff',.3,3);AU.tone(900+P.chg*300,.12,'square',.06,400);
+  if(P.chg>=3){FX.text(P.x,headY(P)-50,'STORM CHARGED','#bff0ff',28,1);FX.bolt(P.x,headY(P)-500,P.x,headY(P)+20,'#bff0ff',.25,4,30);zapSnd()}}
+ else if(k==='chain'){P.chg=0;flash('#bff0ff',.3);shake(12);zapSnd();AU.boom();FX.text(x,y-90,'CHAIN LIGHTNING','#bff0ff',46,1.1);
+  FX.bolt(x,-200,x,y,'#ffffff',.35,6,40);let fx=x,fy=y;
+  for(const id of o.t||[]){const q=G.players[id];if(!q)continue;const qy=headY(q)+60;FX.bolt(fx,fy,q.x,qy,'#7fd8ff',.45,5,34);FX.bolt(fx,fy,q.x,qy,'#ffffff',.35,2,44);
+   FX.ring(q.x,qy,10,90,'#bff0ff',.35,5);FX.burst(q.x,qy,14,{col:'#bff0ff',v0:200,v1:600,l0:.1,l1:.3,s0:2,s1:4,drag:5,kind:'streak'});q.zap=Math.max(q.zap||0,.6);fx=q.x;fy=qy}}
+ else if(k==='fire'){ball.fireEnd=D.clock+2;FX.burst(x,y,18,{col:'#ff7a18',v0:80,v1:340,l0:.25,l1:.6,s0:5,s1:10,drag:3});FX.ring(x,y,8,80,'#ffcf3a',.3,4);
+  FX.text(x,y-70,'WILDFIRE SET','#ffb02e',30,.9);AU.noise(.35,1200,.2,'lowpass');AU.tone(160,.3,'sawtooth',.1,300)}
+ else if(k==='blaze'){ball.fireEnd=0;flash('#ff7a18',.3);shake(14);hitstop(.08);AU.boom();AU.noise(.5,700,.4,'lowpass');
+  FX.ring(x,y,10,170,'#ffcf3a',.4,8);FX.ring(x,y,6,110,'#ff3a1a',.3,5);FX.add({x,y,kind:'glow',s:90,s1:10,life:.3,col:'#ff7a18',drag:0});
+  FX.burst(x,y,34,{col:'#ff7a18',v0:250,v1:900,l0:.2,l1:.5,s0:5,s1:12,drag:4});FX.burst(x,y,16,{col:'#ffe27a',v0:500,v1:1300,l0:.12,l1:.25,s0:2,s1:4,drag:5,kind:'streak'});
+  FX.text(x,y-80,'INFERNO!','#ff7a18',48,1)}
+ else if(k==='wings'){feathers(x,y,16,'#ffd23d');FX.ring(x,y,10,110,'#ffd23d',.3,5);P.wingT=D.clock+.6}
+ else if(k==='angel'){const ox=+o.ox||P.x;P.angelU=1;P.angelEnd=D.clock+1.4;flash('#fff6c8',.35);hitstop(.1);slowmo(.4,.4);
+  for(let i=0;i<14;i++)FX.add({x:P.x+rnd(-30,30),y:FLOOR-i*60,kind:'glow',s:70,s1:10,life:rnd(.4,.8),col:'#fff6c8',drag:0});
+  FX.bolt(ox,FLOOR-110,P.x,FLOOR-110,'#ffffff',.35,4,6);for(let i=0;i<8;i++)FX.add({x:lerp(ox,P.x,i/7),y:FLOOR-110,kind:'glow',s:50,s1:4,life:.4,col:'#ffe9a8',drag:0});
+  feathers(P.x,FLOOR-170,26,'#fff6c8');FX.ring(P.x,FLOOR-120,10,160,'#ffe9a8',.45,6);
+  FX.text(P.x,FLOOR-330,'GUARDIAN ANGEL','#fff1b0',46,1.2);AU.tone(880,.6,'sine',.12,440);AU.tone(1320,.7,'sine',.08,660,.05);AU.perfect()}
+ else if(k==='monster')monsterFX(P,x,y,!!o.c)}
+// a block so big the ball comes straight back down like a meteor. Nobody digs it
+function monsterFX(P,x,y,cur){const col=cur?'#c8d6ff':P.ch.fx;P.mbEnd=D.clock+.7;
+ flash('#ffffff',.5);impactFrame(.14);hitstop(.16);shake(24);slowmo(.3,.45);AU.boom();AU.boom();AU.noise(.4,600,.45,'lowpass');AU.crowd(1,.6);
+ FX.add({x,y,kind:'glow',s:120,s1:10,life:.3,col:'#ffffff',drag:0});FX.ring(x,y,10,200,'#ffffff',.4,9);FX.ring(x,y,8,140,col,.5,6);
+ FX.burst(x,y,30,{col,v0:300,v1:1100,l0:.15,l1:.35,s0:2,s1:5,drag:5,kind:'streak'});FX.burst(x,y,14,{col:'#ffffff',v0:200,v1:600,l0:.3,l1:.6,s0:4,s1:9,drag:3,kind:'shard'});
+ for(let i=0;i<5;i++){const a=rnd(-2.6,-.5);FX.bolt(x,y,x+Math.cos(a)*rnd(120,220),y+Math.sin(a)*rnd(120,220),col,.3,3,16)}
+ FX.text(x,y-120,'MONSTER BLOCK!!',cur?'#dfe8ff':'#ff5a6a',62,1.3);
+ banner({text:'MONSTER BLOCK',sub:P.name.toUpperCase()+(cur?' · IRON CURTAIN':' SHUTS IT DOWN'),col:cur?'#c8d6ff':'#ff5a6a',dur:1.4,big:true,nf:true})}
+
+// host, every frame: Freddy's black hole pulls the ball in, Yumin's angel catches the one that got away
+function mythFrame(dt){const B=ball;if(!B.live||B.serving||B.unstop||B.ult||G.state!=='rally')return;
+ for(const F of G.players){const m=F.ch.mpas;if(!m||B.lastTeam===F.team||F.stun>0)continue;const d=dirOf(F.team);
+  if(m==='horizon'){if((B.x-NETX)*d>-40||B.vy<0||B.x<LINE_L||B.x>LINE_R||!(TM[F.team].next===F||F.in))continue;
+   const dx=F.x+d*20-B.x,dy=FLOOR-F.h-150-B.y;if(Math.abs(dx)>340||dy>420||dy<-40)continue;
+   B.vx+=clamp(dx*7,-1100,1100)*dt;B.vx*=Math.exp(-1.6*dt);B.vy*=Math.exp(-.9*dt);F.pullEnd=D.clock+.15}
+  else if(m==='angel'){if(F.angelU||F.dive||F.h>0||(F.swing&&!F.swing.done))continue;
+   const e=etaY(FLOOR-150);if(e===null||e>.05)continue;const b=ballAt(e);if((b.x-NETX)*d>-60||b.x<LINE_L-30||b.x>LINE_R+30)continue;
+   const tx=b.x+d*28;if(Math.abs(tx-F.x)<110||TM[F.team].players.some(q=>q!==F&&!q.stun&&Math.abs(q.x-b.x)<80))continue;
+   const ox=F.x;F.x=tx;F.vx=0;F.face=d;pasFX('angel',F,{ox:Math.round(ox)});
+   const s=F.swing={t:.1,pose:'bump',best:0,pd:0,done:true,R:70,dur:SWING};hitBall(F,s,0);return}}}
+// after every touch (host): storm charges, wildfire sets, golden feathers
+function mythHit(P,kind,B){const m=P.ch.mpas,lit=B.fire===P.team&&B.fireEnd>D.clock;B.fire=-1;B.fireEnd=0;
+ if(lit&&kind==='spike')pasFX('blaze',P,{x:Math.round(B.x),y:Math.round(B.y)});if(!m)return;
+ if(m==='storm'){if(kind==='spike'&&(P.chg|0)>=3){const t=oppsOf(P).slice().sort((a,b)=>Math.abs(a.x-B.x)-Math.abs(b.x-B.x)).slice(0,2);
+   for(const q of t)stunP(q,.55,'zap');pasFX('chain',P,{x:Math.round(B.x),y:Math.round(B.y),t:t.map(q=>q.id)})}
+  else pasFX('storm',P,{n:Math.min(3,(P.chg|0)+1)})}
+ else if(m==='wildfire'&&kind==='set'){B.fire=P.team;pasFX('fire',P,{x:Math.round(B.x),y:Math.round(B.y)})}
+ else if(m==='wings'&&kind==='spike')pasFX('wings',P,{x:Math.round(B.x),y:Math.round(B.y)})}
+
+// drawn on every screen from synced state
+function wing(g,x,y,sd,open,col,a){g.save();g.translate(x,y);g.scale(sd,1);g.rotate(-open*.9+.2);g.globalAlpha=a;
+ for(let i=0;i<6;i++){const L=70+i*16-(i>3?(i-3)*22:0),r=-.15-i*.17;g.save();g.rotate(r);const gr=g.createLinearGradient(0,0,L,0);gr.addColorStop(0,'#fff8dc');gr.addColorStop(1,col);g.fillStyle=gr;
+  g.beginPath();g.ellipse(L*.55,0,L*.55,9+i*1.2,0,0,7);g.fill();g.restore()}
+ g.restore()}
+function mythDraw(g){const B=ball,t=D.clock;
+ if(B.fireEnd>t&&B.live){for(let i=0;i<2;i++)FX.add({x:B.x+rnd(-10,10),y:B.y+rnd(-10,10),vx:rnd(-40,40)-B.vx*.08,vy:-rnd(80,200),life:rnd(.25,.45),s:rnd(9,16),s1:2,col:pick(['#ff7a18','#ffcf3a','#ff3a1a']),kind:'glow',drag:1})}
+ for(const q of G.players){const m=q.ch.mpas;if(!m)continue;const hy=headY(q),d=dirOf(q.team);if(G.state==='serve')q.angelU=0;
+  g.save();g.globalCompositeOperation='lighter';
+  if(m==='wings'&&(q.h>25||q.wingT>t)){const open=clamp(q.h/220,0,1),fl=Math.sin(t*14)*.12*(q.vh>0?1:.4);
+   glow(g,q.x,hy+60,110,'#ffd23d',.25*open);wing(g,q.x-q.face*6,hy+54,-1,open+fl,'#ffcf3a',.85*open);wing(g,q.x-q.face*6,hy+54,1,open+fl,'#ffcf3a',.85*open);
+   if(Math.random()<.25*open)FX.add({x:q.x+rnd(-80,80),y:hy+rnd(40,120),vy:rnd(20,80),vx:rnd(-30,30),ay:60,life:1,s:7,col:'#ffe9a8',kind:'shard',vr:4,add:false})}
+  else if(m==='storm'&&q.chg>0){for(let i=0;i<q.chg;i++){const a=t*6+i*Math.PI*2/q.chg,px=q.x+Math.cos(a)*46,py=hy+80+Math.sin(a)*18;glow(g,px,py,16,'#bff0ff',.9)}
+   if(q.chg>=3){glow(g,q.x,hy+80,90,'#7fd8ff',.25+.1*Math.sin(t*20));if(Math.random()<.2)FX.bolt(q.x+rnd(-40,40),hy+rnd(20,60),q.x+rnd(-50,50),hy+rnd(100,170),'#bff0ff',.06,2,10)}}
+  else if(m==='horizon'){const k=q.pullEnd>t?1:.3,cx=q.x+d*20,cy=FLOOR-q.h-150;g.lineWidth=3;
+   for(let i=0;i<3;i++){g.globalAlpha=k*(.5-i*.12);g.strokeStyle=i%2?'#b06bff':'#3dffd8';g.beginPath();const r=40+i*26+Math.sin(t*3+i)*4;g.ellipse(cx,cy,r,r*.35,0,t*(3+i)+i,t*(3+i)+i+3.6);g.stroke()}
+   glow(g,cx,cy,60+k*40,'#8a5cff',.25*k);g.globalCompositeOperation='source-over';g.globalAlpha=.55*k;g.fillStyle='#0a0614';g.beginPath();g.ellipse(cx,cy,12+k*10,(12+k*10)*.5,0,0,7);g.fill();
+   if(k>.5&&Math.random()<.6){const a=rnd(0,6.3),r=rnd(90,160);FX.add({x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r*.4,vx:-Math.cos(a)*r*3,vy:-Math.sin(a)*r*1.2,life:.3,s:4,s1:1,col:'#c58cff',kind:'streak'})}}
+  else if(m==='wildfire'){if(Math.random()<.18)FX.add({x:q.x+rnd(-20,20),y:hy+rnd(60,140),vy:-rnd(40,100),life:.6,s:5,s1:1,col:'#ff9a3a',kind:'glow',drag:1})}
+  else if(m==='curtain'){const s=q.swing;if(s&&s.pose==='block'&&q.h>10){const k=clamp(s.t/.12,0,1)*clamp((.52-s.t)/.1,0,1),x=NETX-d*18,y=FLOOR-q.h-250;
+    for(const sd of[-1,1]){g.globalAlpha=.35*k;g.fillStyle='#c8d6ff';g.beginPath();g.roundRect(x+sd*34-26,y-70*k,52,110,18);g.fill();for(let f=0;f<4;f++){g.beginPath();g.roundRect(x+sd*34-24+f*13,y-70*k-34,11,40,6);g.fill()}}
+    glow(g,x,y,120*k,'#c8d6ff',.3*k)}
+   if(q.mbEnd>t){const k=(q.mbEnd-t)/.7,x=NETX+d*90,y=lerp(NETTOP+180,NETTOP-120,k);g.globalAlpha=.4*k;g.fillStyle='#ffffff';g.beginPath();g.roundRect(x-80,y-40,160,120,36);g.fill();glow(g,x,y,200,'#c8d6ff',.4*k)}}
+  else if(m==='angel'){const hx=q.x,yy=hy-6+Math.sin(t*3)*3,a=q.angelU?.25:.9;g.globalAlpha=a;g.strokeStyle='#ffe9a8';g.lineWidth=5;g.beginPath();g.ellipse(hx,yy,26,7,0,0,7);g.stroke();glow(g,hx,yy,40,'#fff1b0',a*.5);
+   if(q.angelEnd>t){const k=clamp((q.angelEnd-t)/.5,0,1);wing(g,q.x,hy+56,-1,1.1,'#fff1b0',.9*k);wing(g,q.x,hy+56,1,1.1,'#fff1b0',.9*k);glow(g,q.x,hy+60,180,'#fff6c8',.35*k)}}
+  g.restore()}
+ // any monster block (not just Lauren's): a ghost palm slamming down
+ for(const q of G.players){if(q.ch.mpas==='curtain'||!(q.mbEnd>t))continue;const k=(q.mbEnd-t)/.7,d=dirOf(q.team),x=NETX+d*90,y=lerp(NETTOP+180,NETTOP-120,k);
+  g.save();g.globalCompositeOperation='lighter';g.globalAlpha=.35*k;g.fillStyle=q.ch.fx;g.beginPath();g.roundRect(x-70,y-36,140,110,32);g.fill();glow(g,x,y,170,q.ch.fx,.35*k);g.restore()}}

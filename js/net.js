@@ -267,6 +267,8 @@ function replay(e){if(!e||typeof e!=='object')return;const P=G.players[e.p];
  else if(e.k==='hit'&&P)hitFX(P,+e.q||0,String(e.kind||''),+e.x||0,+e.y||0);
  else if(e.k==='sw'&&P&&P===G.ctrl)swingFX(P,{x:+e.x,y:+e.y,r:+e.r},!!e.g,!!e.m);
  else if(e.k==='land'){impact(+e.x||0,ball);if(e.kl){NOBAN=1;try{killLand(+e.x||0)}finally{NOBAN=0}}}
+ else if(e.k==='mp'&&P)pasShow(String(e.m),P,e);
+ else if(e.k==='skull'){if(P)P.crack=1.6;skullFX(+e.x||0,+e.y||0,P?P.ch.fx:'#ff4060',!!e.big)}
  else if(e.k==='pt')ptFX(e.w?1:0);
  else if(e.k==='end')endFX();
  else if(e.k==='cine'){NOBAN=1;try{
@@ -293,7 +295,7 @@ function clientFrame(rdt){const now=performance.now();
   if(P.h>0||P.vh>0){P.vh-=GP*rdt;P.h+=P.vh*rdt;if(P.h<=0){P.h=0;P.vh=0}}
   if(P.eh){const c=P.eh*k;P.h=Math.max(0,P.h+c);P.eh-=c}
   if(P.swing)P.swing.t+=rdt;if(P.dive)P.dive.t+=rdt;if(P.land>0)P.land-=rdt;
-  for(const f of ['bonk','zap','fear'])if(P[f]>0)P[f]-=rdt;
+  for(const f of ['bonk','zap','fear','crack'])if(P[f]>0)P[f]-=rdt;
   updateVisual(P,rdt,G.time)}
  const B=ball;
  if(B.live||B.dead){B.vy+=GB*B.gs*rdt;B.x+=B.vx*rdt;B.y+=B.vy*rdt;if(B.ex||B.ey){const cx=B.ex*k,cy=B.ey*k;B.x+=cx;B.y+=cy;B.ex-=cx;B.ey-=cy}
